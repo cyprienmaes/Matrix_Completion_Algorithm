@@ -1,20 +1,24 @@
+import os
+
+os.environ["KERAS_BACKEND"] = "plaidml.keras.backend"
 import pandas as pd
 import matplotlib.pyplot as plt
 import math
 import numpy as np
 import seaborn as sns
 from sklearn.model_selection import train_test_split
-from tensorflow.python.keras.optimizers import Adam, RMSprop
-from tensorflow.python.keras.layers import Input, Dense, Embedding, Flatten, Dropout, merge, Activation
-from tensorflow.python.keras.layers import BatchNormalization, LeakyReLU, add, concatenate
-from tensorflow.python.keras.models import Model, model_from_json
-from tensorflow.python.keras import backend as K
-from tensorflow.python.keras import regularizers
+from keras.optimizers import Adam, RMSprop
+from keras.layers import Input, Dense, Embedding, Flatten, Dropout, merge, Activation
+from keras.layers import BatchNormalization, LeakyReLU, add, concatenate
+from keras.models import Model, model_from_json
+from keras import backend as K
+from keras import regularizers
 from keras.layers import Activation
 from keras.utils.generic_utils import get_custom_objects
-from tensorflow.python.keras.callbacks import ModelCheckpoint, EarlyStopping
-from tensorflow.python.keras import initializers
+from keras.callbacks import ModelCheckpoint, EarlyStopping
+from keras import initializers
 import warnings
+from keras import utils
 
 warnings.filterwarnings('ignore')
 from keras.callbacks import EarlyStopping, ModelCheckpoint
@@ -29,7 +33,7 @@ df = pd.read_csv('ml100k_ratings.csv',
                  encoding='latin-1',
                  usecols=['user_emb_id', 'movie_emb_id', 'rating', 'timestamp'])
 # Normalize movie lens data base
-df['rating'] = df['rating']/5.0
+df['rating'] = df['rating'] / 5.0
 # +1 is the real size, as they are zero based
 num_users = df['user_emb_id'].unique().max() + 1
 num_movies = df['movie_emb_id'].unique().max() + 1
@@ -195,14 +199,16 @@ def masked_rmse_clip(y_true, y_pred):
 #                            [0.0, 0.0, 1.0, 0.4],
 #                            [0.0, 0.0, 0.0, 0.2],
 #                            [0.0, 0.4, 0.8, 0.6]])
-y_prediction = K.constant([[1.0, 1.0, 1.0, 0.4]])
+y_pred = np.array([[1.0, 1.0, 1.0, 0.4]])
+y_prediction = K.constant(y_pred)
 # y_true = K.constant([[0.4, 0.8, 0.4, 0.4],
 #                      [0.8, 0.8, 0.2, 0.2],
 #                      [0.0, 1.0, 1.0, 0.6],
 #                      [0.0, 0.0, 1.0, 0.4],
 #                      [0.0, 0.0, 0.0, 0.2],
 #                      [0.0, 0.0, 0.0, 0.0]])
-y_true = K.constant([[0.0, 0.6, 0.2, 0.4]])
+y_tr = np.array([[0.0, 0.6, 0.2, 0.4]])
+y_true = K.constant(y_tr)
 true = K.eval(y_true)
 pred = K.eval(y_prediction)
 loss = K.eval(masked_se(y_true, y_prediction))
@@ -210,6 +216,7 @@ rmse = K.eval(masked_rmse_clip(y_true, y_prediction))
 
 for i in range(true.shape[0]):
     print(true[i], pred[i], loss[i], rmse[i], sep='\t')
+
 
 # Particular weight initialization
 def custom_random_initializer(shape, dtype=None):
@@ -221,18 +228,22 @@ def custom_random_initializer(shape, dtype=None):
         s = np.sqrt(6.0 / (shape[0] + shape[1] - 1))
     rand = 2.0 * 4.0 * rand
     rand = rand * s
-    w = tf.convert_to_tensor(rand, dtype=tf.float32)
-    return w
+    return rand
+    #w = tf.convert_to_tensor(rand, dtype=tf.float32)
+    #return w
+
 
 def tanh_opt(x):
-    return 1.7159*K.tanh(2.0/3.0*x)
+    return 1.7159 * K.tanh(2.0 / 3.0 * x)
+
 
 get_custom_objects().update({'tanh_opt': Activation(tanh_opt)})
+
 
 # AutoRec
 def auto_rec(matrix, latent_dim, reg, first_activation, last_activation):
     input_layer = x = Input(shape=(matrix.shape[1],),
-                        name='UserRating')
+                            name='UserRating')
     x = Dense(latent_dim,
               activation=first_activation,
               kernel_initializer=custom_random_initializer,
@@ -251,7 +262,7 @@ def auto_rec(matrix, latent_dim, reg, first_activation, last_activation):
 
 def auto_rec_lrelu(matrix, reg):
     input_layer = x = Input(shape=(matrix.shape[1],),
-                        name='UserRating')
+                            name='UserRating')
     x = Dense(500,
               name='LatentSpace',
               kernel_regularizer=regularizers.l2(reg))(x)
@@ -266,21 +277,21 @@ def auto_rec_lrelu(matrix, reg):
 
 # Build model
 tf.compat.v1.disable_eager_execution()
-autorec = auto_rec(users_items_matrix_train_zero, 50, 0.001,'linear','sigmoid')
-autorec.compile(optimizer = RMSprop(lr=0.0001), loss=masked_rmse, metrics=[masked_rmse_clip])
+autorec = auto_rec(users_items_matrix_train_zero, 500, 0.0005, 'linear', 'sigmoid')
+autorec.compile(optimizer=RMSprop(lr=0.0001), loss=masked_rmse, metrics=[masked_rmse_clip])
 autorec.summary()
 
 hist_autorec = autorec.fit(x=users_items_matrix_average, y=users_items_matrix_train_zero,
-                           epochs=700,
+                           epochs=500,
                            batch_size=256,
                            verbose=2,
                            validation_data=[users_items_matrix_average, users_items_matrix_validate])
 
-tf.keras.utils.plot_model(autorec, to_file='AutoRec.png')
+utils.plot_model(autorec, to_file='AutoRec.png')
 
-show_rmse(hist_autorec,30)
+show_rmse(hist_autorec, 30)
 
-show_error(hist_autorec,50)
+show_error(hist_autorec, 50)
 
 test_result = autorec.evaluate(users_items_matrix_average, users_items_matrix_test)
 
