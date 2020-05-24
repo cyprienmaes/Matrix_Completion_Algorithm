@@ -10,6 +10,8 @@ from tensorflow.python.keras.layers import BatchNormalization, LeakyReLU, add, c
 from tensorflow.python.keras.models import Model, model_from_json
 from tensorflow.python.keras import backend as K
 from tensorflow.python.keras import regularizers
+from keras.layers import Activation
+from keras.utils.generic_utils import get_custom_objects
 from tensorflow.python.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.python.keras import initializers
 import warnings
@@ -26,7 +28,8 @@ df = pd.read_csv('ml100k_ratings.csv',
                  sep='\t',
                  encoding='latin-1',
                  usecols=['user_emb_id', 'movie_emb_id', 'rating', 'timestamp'])
-
+# Normalize movie lens data base
+df['rating'] = df['rating']/5.0
 # +1 is the real size, as they are zero based
 num_users = df['user_emb_id'].unique().max() + 1
 num_movies = df['movie_emb_id'].unique().max() + 1
@@ -46,7 +49,11 @@ train_df, validate_df = train_test_split(train_df,
 
 
 def data_pre_processor(rating_df, num_row, num_col, init_value=0, average=False):
-    """
+    """Construction of a matrix with the users as rows and items as columns.
+
+    The matrix can be chosen with different constant for the empty part. The matrix can be also
+    constructed with the average for each existing items.
+
     Parameters
     ----------
     :param rating_df: pandas DataFrame.
@@ -81,14 +88,14 @@ def data_pre_processor(rating_df, num_row, num_col, init_value=0, average=False)
 
 
 # Creating a sparse pivot table with users in rows and items in columns
-users_items_matrix_train_zero = data_pre_processor(train_df, num_users, num_movies, 0)
-users_items_matrix_train_one = data_pre_processor(train_df, num_users, num_movies, 1)
-users_items_matrix_train_two = data_pre_processor(train_df, num_users, num_movies, 2)
-users_items_matrix_train_three = data_pre_processor(train_df, num_users, num_movies, 3)
-users_items_matrix_train_four = data_pre_processor(train_df, num_users, num_movies, 4)
-users_items_matrix_train_five = data_pre_processor(train_df, num_users, num_movies, 5)
-users_items_matrix_validate = data_pre_processor(validate_df, num_users, num_movies, 0)
-users_items_matrix_test = data_pre_processor(test_df, num_users, num_movies, 0)
+users_items_matrix_train_zero = data_pre_processor(train_df, num_users, num_movies, 0.0)
+# users_items_matrix_train_one = data_pre_processor(train_df, num_users, num_movies, 1)
+# users_items_matrix_train_two = data_pre_processor(train_df, num_users, num_movies, 2)
+# users_items_matrix_train_three = data_pre_processor(train_df, num_users, num_movies, 3)
+# users_items_matrix_train_four = data_pre_processor(train_df, num_users, num_movies, 4)
+# users_items_matrix_train_five = data_pre_processor(train_df, num_users, num_movies, 5)
+users_items_matrix_validate = data_pre_processor(validate_df, num_users, num_movies, 0.0)
+users_items_matrix_test = data_pre_processor(test_df, num_users, num_movies, 0.0)
 
 users_items_matrix_average = data_pre_processor(train_df, num_users, num_movies, average=True)
 
@@ -173,7 +180,7 @@ def masked_rmse(y_true, y_pred):
 def masked_rmse_clip(y_true, y_pred):
     # masked function
     mask_true = K.cast(K.not_equal(y_true, 0), K.floatx())
-    y_pred = K.clip(y_pred, 1, 5)
+    y_pred = K.clip(y_pred, 0.0, 1.0)
     # masked squared error
     masked_squared_error = K.square(mask_true * (y_true - y_pred))
     # Normalized error
@@ -182,39 +189,60 @@ def masked_rmse_clip(y_true, y_pred):
 
 
 # Test custom cost function
-y_prediction = K.constant([[1, 1, 1, 1],
-                           [1, 1, 1, 10],
-                           [1, 1, 1, 3],
-                           [1, 1, 1, 3],
-                           [1, 1, 1, 3],
-                           [1, 1, 1, 3]])
-# y_prediction = K.constant([[1, 1, 1, 3]])
-y_true = K.constant([[1, 1, 1, 1],
-                     [1, 1, 1, 1],
-                     [0, 1, 1, 1],
-                     [0, 0, 1, 1],
-                     [0, 0, 0, 1],
-                     [0, 0, 0, 0]])
-# y_true = K.constant([[0, 0, 1, 1]])
+# y_prediction = K.constant([[0.4, 0.8, 1.0, 1.0],
+#                            [0.8, 0.8, 0.2, 0.2],
+#                            [1.0, 1.0, 1.0, 0.6],
+#                            [0.0, 0.0, 1.0, 0.4],
+#                            [0.0, 0.0, 0.0, 0.2],
+#                            [0.0, 0.4, 0.8, 0.6]])
+y_prediction = K.constant([[1.0, 1.0, 1.0, 0.4]])
+# y_true = K.constant([[0.4, 0.8, 0.4, 0.4],
+#                      [0.8, 0.8, 0.2, 0.2],
+#                      [0.0, 1.0, 1.0, 0.6],
+#                      [0.0, 0.0, 1.0, 0.4],
+#                      [0.0, 0.0, 0.0, 0.2],
+#                      [0.0, 0.0, 0.0, 0.0]])
+y_true = K.constant([[0.0, 0.6, 0.2, 0.4]])
 true = K.eval(y_true)
 pred = K.eval(y_prediction)
 loss = K.eval(masked_se(y_true, y_prediction))
-rmse = K.eval(masked_rmse(y_true, y_prediction))
+rmse = K.eval(masked_rmse_clip(y_true, y_prediction))
 
 for i in range(true.shape[0]):
     print(true[i], pred[i], loss[i], rmse[i], sep='\t')
 
+# Particular weight initialization
+def custom_random_initializer(shape, dtype=None):
+    if len(shape) == 1:
+        rand = np.random.rand(shape[0]) - 0.5
+        s = np.sqrt(6.0 / (shape[0] - 1))
+    else:
+        rand = np.random.rand(shape[0], shape[1]) - 0.5
+        s = np.sqrt(6.0 / (shape[0] + shape[1] - 1))
+    rand = 2.0 * 4.0 * rand
+    rand = rand * s
+    w = tf.convert_to_tensor(rand, dtype=tf.float32)
+    return w
+
+def tanh_opt(x):
+    return 1.7159*K.tanh(2.0/3.0*x)
+
+get_custom_objects().update({'tanh_opt': Activation(tanh_opt)})
 
 # AutoRec
-def auto_rec(matrix, reg, first_activation, last_activation):
+def auto_rec(matrix, latent_dim, reg, first_activation, last_activation):
     input_layer = x = Input(shape=(matrix.shape[1],),
                         name='UserRating')
-    x = Dense(500,
+    x = Dense(latent_dim,
               activation=first_activation,
+              kernel_initializer=custom_random_initializer,
+              bias_initializer=custom_random_initializer,
               name='LatentSpace',
               kernel_regularizer=regularizers.l2(reg))(x)
     output_layer = Dense(matrix.shape[1],
                          activation=last_activation,
+                         kernel_initializer=custom_random_initializer,
+                         bias_initializer=custom_random_initializer,
                          name='UserScorePred',
                          kernel_regularizer=regularizers.l2(reg))(x)
     model = Model(input_layer, output_layer)
@@ -238,12 +266,12 @@ def auto_rec_lrelu(matrix, reg):
 
 # Build model
 tf.compat.v1.disable_eager_execution()
-autorec = auto_rec(users_items_matrix_train_zero, 0.0005, 'tanh', 'sigmoid')
-autorec.compile(optimizer = Adam(lr=0.0001), loss=masked_mse, metrics=[masked_rmse_clip])
+autorec = auto_rec(users_items_matrix_train_zero, 50, 0.001,'linear','sigmoid')
+autorec.compile(optimizer = RMSprop(lr=0.0001), loss=masked_rmse, metrics=[masked_rmse_clip])
 autorec.summary()
 
 hist_autorec = autorec.fit(x=users_items_matrix_average, y=users_items_matrix_train_zero,
-                           epochs=500,
+                           epochs=700,
                            batch_size=256,
                            verbose=2,
                            validation_data=[users_items_matrix_average, users_items_matrix_validate])
@@ -258,4 +286,4 @@ test_result = autorec.evaluate(users_items_matrix_average, users_items_matrix_te
 
 predict_autorec = autorec.predict(users_items_matrix_train_zero)
 
-
+print("Application finished")

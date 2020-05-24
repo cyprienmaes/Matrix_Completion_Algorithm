@@ -523,12 +523,58 @@ def aemc_optimizer2(neural_network, x_input, max_iter,tol_fun):
     x_exit = tf.convert_to_tensor(x_exit.astype('float32'))
     feed_forward(neural_network,x_exit,x_exit)
 
+def data_pre_processor(rating_df, num_row, num_col, init_value=0, average=False):
+    """Construction of a matrix with the users as rows and items as columns.
+
+    The matrix can be chosen with different constant for the empty part. The matrix can be also
+    constructed with the average for each existing items.
+
+    Parameters
+    ----------
+    :param rating_df: pandas DataFrame.
+        colums=['userID', 'itemID', 'rating', ...]
+    :param num_row: int.
+        Number of users
+    :param num_col: int.
+        Number of items
+    :param init_value: int.
+        Value of empty entry
+    :param average: bool.
+        Average the sum of matrix columns by the number of true element
+    Return
+    ------
+    :return: 2D numpy array.
+    """
+    if average:
+        matrix = np.full((num_row, num_col), 0.0)
+        for (_, userID, itemID, rating, timestamp) in rating_df.itertuples():
+            matrix[userID, itemID] = rating
+
+        avg = np.true_divide(matrix.sum(1), np.maximum((matrix != 0).sum(1), 1))
+        indx = np.where(matrix == 0)
+        matrix[indx] = np.take(avg, indx[0])
+
+    else:
+        matrix = np.full((num_row, num_col), init_value)
+        for (_, userID, itemID, rating, timestamp) in rating_df.itertuples():
+            matrix[userID, itemID] = rating
+
+    return matrix
+
 if __name__ == '__main__':
     # Define the data in the correct form to train the neural network
     # ---------------------------------------------------------------
-    data = pd.read_csv('movielen100k.csv')
-    data = data.to_numpy()
-    pre_processing_data = PrePossData(data.T, 5.0, 0.0, 0.3)
+    # Data Preprocessing
+    df = pd.read_csv('ml100k_ratings.csv',
+                     sep='\t',
+                     encoding='latin-1',
+                     usecols=['user_emb_id', 'movie_emb_id', 'rating', 'timestamp'])
+    # +1 is the real size, as they are zero based
+    num_users = df['user_emb_id'].unique().max() + 1
+    num_movies = df['movie_emb_id'].unique().max() + 1
+    df.head(5)
+    data = data_pre_processor(df, num_users, num_movies, 0.0)
+    pre_processing_data = PrePossData(data, 5.0, 0.0, 0.3)
 
     x = pre_processing_data.x
     m = pre_processing_data.m_original
