@@ -1,20 +1,22 @@
-import os
-
-os.environ["KERAS_BACKEND"] = "plaidml.keras.backend"
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.model_selection import train_test_split
-from keras.optimizers import Adam, RMSprop
-from keras.layers import Input, Dense, Embedding, Flatten, Dropout, merge, Activation
-from keras.models import Model, model_from_json
-from keras import backend as K
-from keras import regularizers
+from tensorflow.python.keras.optimizers import Adam, RMSprop
+from tensorflow.python.keras.layers import Input, Dense, Embedding, Flatten, Dropout, merge, Activation, BatchNormalization, LeakyReLU
+from tensorflow.python.keras.models import Model
+from tensorflow.python.keras import backend as K
+from tensorflow.python.keras import regularizers
+# %matplotlib inline
 import warnings
-
 warnings.filterwarnings('ignore')
+# from keras.callbacks import EarlyStopping, ModelCheckpoint
+from scipy.sparse import csr_matrix
+import tensorflow as tf
+from tensorflow.python.keras.models import model_from_json
+from sklearn import preprocessing
+# from tensorflow.python.keras.utils import plot_model
 
-# Data Preprocessing
 df = pd.read_csv('ml1m_ratings.csv',
                  sep='\t',
                  encoding='latin-1',
@@ -97,26 +99,6 @@ def show_rmse(history, skip):
     plt.legend(['train', 'validation'], loc='best')
     plt.show()
 
-def save_model(name, model):
-    # # serialize model to JSON
-    model_json = model.to_json()
-    with open("{}.json".format(name), "w") as json_file:
-      json_file.write(model_json)
-    # serialize weights to HDF5
-    model.save_weights("{}.h5".format(name))
-    print("Saved model to disk")
-
-def load_history(name):
-    # load json and create model
-    hist_file = open('{}.json'.format(name), 'r')
-    loaded_hist_json = hist_file.read()
-    hist_file.close()
-    loaded_hist = pd.read_json(loaded_hist_json)
-    # load weights into new model
-    # loaded_model.load_weights("{}.h5".format(name))
-    print("Loaded history from disk")
-    return loaded_hist
-
 def masked_se(y_true, y_pred):
     # masked function
     mask_true = K.cast(K.not_equal(y_true, 0), K.floatx())
@@ -152,26 +134,20 @@ def masked_rmse_clip(y_true, y_pred):
     return masked_mse
 
 # Test custom cost function
-arr1 = np.array([[ 1, 1, 1, 1],
+y_pred = K.constant([[ 1, 1, 1, 1],
                      [ 1, 1, 1, 10],
                      [ 1, 1, 1, 3],
                      [ 1, 1, 1, 3],
                      [ 1, 1, 1, 3],
                      [ 1, 1, 1, 3]])
-y_pred = K.constant(arr1)
-arr2 = np.array([[ 1, 1, 1, 3]])
-y_pred = K.constant(arr2)
-
-arr3 = np.array([[ 1, 1, 1, 1],
+y_pred = K.constant([[ 1, 1, 1, 3]])
+y_true = K.constant([[ 1, 1, 1, 1],
                      [ 1, 1, 1, 1],
                      [ 0, 1, 1, 1],
                      [ 0, 0, 1, 1],
                      [ 0, 0, 0, 1],
                      [ 0, 0, 0, 0]])
-y_true = K.constant(arr3)
-arr4 = np.array([[ 0, 0, 1, 1]])
-y_true = K.constant(arr4)
-
+y_true = K.constant([[ 0, 0, 1, 1]])
 true = K.eval(y_true)
 pred = K.eval(y_pred)
 loss = K.eval(masked_se(y_true, y_pred))
@@ -196,7 +172,7 @@ def AutoRec(X, reg, first_activation, last_activation):
     '''
     input_layer = x = Input(shape=(X.shape[1],),
                             name='UserRating')
-    x = Dense(512, activation=first_activation,
+    x = Dense(500, activation=first_activation,
               name='LatentSpace',
               kernel_regularizer=regularizers.l2(reg))(x)
     output_layer = Dense(X.shape[1],
@@ -210,86 +186,25 @@ def AutoRec(X, reg, first_activation, last_activation):
 
 # Build model
 
-activation = ['linear', 'elu', 'selu']
-lamb = [0.0005, 0.005]
+AutoRec = AutoRec(users_items_matrix_train_zero, 0.0005, 'elu', 'elu')
 
-for a in activation:
-    print(a)
-    for la in lamb:
-        print(la)
-        AutoRecM = AutoRec(users_items_matrix_train_zero.T, la, a, 'linear')
+AutoRec.compile(optimizer=Adam(lr=0.0001), loss=masked_mse, metrics=[masked_rmse_clip])
 
-        AutoRecM.compile(optimizer=RMSprop(lr=0.001), loss=masked_mse, metrics=[masked_rmse_clip])
+AutoRec.summary()
 
-        AutoRecM.summary()
-
-        hist_Autorec = AutoRecM.fit(x=users_items_matrix_train_three.T, y=users_items_matrix_train_zero.T,
-                                   epochs=500,
-                                   batch_size=256,
-                                   verbose=2,
-                                   validation_data=[users_items_matrix_train_three.T, users_items_matrix_validate.T])
-
-        hist_df = pd.DataFrame(hist_Autorec.history)
-
-        st = str(la * 2)
-
-        # save to json:
-        hist_json_file = 'history-1m-512-'+st[2:]+'-'+a[0]+'l-RMSprop-001.json'
-        with open(hist_json_file, mode='w') as f:
-            hist_df.to_json(f)
-
-        # or save to csv:
-        hist_csv_file = 'history-1m-512-'+st[2:]+'-'+a[0]+'l-RMSprop-001.csv'
-        with open(hist_csv_file, mode='w') as f:
-            hist_df.to_csv(f)
-
-        K.clear_session()
-
-
-        print('Finished !')
-
-# AutoRec = AutoRec(users_items_matrix_train_zero.T, 0.05, 'selu', 'linear')
-#
-# AutoRec.compile(optimizer=Adam(lr=0.001), loss=masked_mse, metrics=[masked_rmse_clip])
-#
-# AutoRec.summary()
-#
-# hist_Autorec = AutoRec.fit(x=users_items_matrix_train_three.T, y=users_items_matrix_train_zero.T,
-#                   epochs=500,
-#                   batch_size=512,
-#                   verbose = 2,
-#                   validation_data=[users_items_matrix_train_three.T, users_items_matrix_validate.T])
+hist_Autorec = AutoRec.fit(x=users_items_matrix_train_average, y=users_items_matrix_train_zero,
+                  epochs=500,
+                  batch_size=256,
+                  verbose = 2,
+                  validation_data=[users_items_matrix_train_average, users_items_matrix_validate])
 
 # plot_model(AutoRec, to_file='AutoRec.png')
 
-# Use 3 as initial value
-# Compare 500  and 30
+show_rmse(hist_Autorec, 30)
 
-# with open('/trainHistoryDict', 'wb') as file_pi:
-#     np.pickle.dump(hist_Autorec.history, file_pi)
+show_error(hist_Autorec, 50)
 
-# # convert the history.history dict to a pandas DataFrame:
-# hist_df = pd.DataFrame(hist_Autorec.history)
-#
-# # save to json:
-# hist_json_file = 'history-512-1-sl-001.json'
-# with open(hist_json_file, mode='w') as f:
-#     hist_df.to_json(f)
-#
-# # or save to csv:
-# hist_csv_file = 'history-512-1-sl-001.csv'
-# with open(hist_csv_file, mode='w') as f:
-#     hist_df.to_csv(f)
-#
-#
-# show_rmse(hist_Autorec, 30)
-#
-# show_error(hist_Autorec, 50)
-#
-# test_result = AutoRec.evaluate(users_items_matrix_train_three.T, users_items_matrix_test.T)
-#
-# # print('Test results: loss: '+ str(test_result[0]) + ' - rmse: '+ str(test_result[1]))
-#
-# predict_autorec = AutoRec.predict(users_items_matrix_train_zero.T)
+test_result = AutoRec.evaluate(users_items_matrix_train_average, users_items_matrix_test)
 
+predict_autorec = AutoRec.predict(users_items_matrix_train_zero)
 
